@@ -86,11 +86,12 @@ loginUI <- function(id,
 #'   When \code{user_auth} is FALSE \code{info} is NULL.
 #'
 #' @importFrom rlang :=
+#' @importFrom proofr proof_authenticate
 #'
 #' @example inst/shiny-examples/basic/app.R
 #' @export
 loginServer <- function(id, 
-                        data,
+                        data = NULL,
                         user_col,
                         pwd_col,
                         sodium_hashed = FALSE,
@@ -99,7 +100,8 @@ loginServer <- function(id,
                         cookie_logins = FALSE,
                         sessionid_col,
                         cookie_getter,
-                        cookie_setter) {
+                        cookie_setter,
+                        sqlconn = NULL) {
   
   # if colnames are strings convert them to symbols
   try_class_uc <- try(class(user_col), silent = TRUE)
@@ -121,8 +123,7 @@ loginServer <- function(id,
     }
   }
   
-  # ensure all text columns are character class
-  data <- dplyr::mutate_if(data, is.factor, as.character)
+  data <- dplyr::tibble(user = NULL, password = NULL)
   
   shiny::moduleServer(
     id,
@@ -174,6 +175,7 @@ loginServer <- function(id,
             nchar(input$jscookie) > 0
           )
           
+          print("in loginServer, line 178")
           cookie_data <- dplyr::filter(cookie_getter(), {{sessionid_col}} == input$jscookie)
           
           if (nrow(cookie_data) != 1) {
@@ -191,7 +193,7 @@ loginServer <- function(id,
             
             credentials$user_auth <- TRUE
             credentials$info <- dplyr::bind_cols(
-              dplyr::filter(data, {{user_col}} == .userid),
+              dplyr::filter(dbReadTable(sqlconn, "users"), {{user_col}} == .userid),
               dplyr::select(cookie_data, -{{user_col}})
             )
           }
@@ -201,27 +203,18 @@ loginServer <- function(id,
       
       # possibility 2: login through login button
       shiny::observeEvent(input$button, {
-        
-        # check for match of input username to username column in data
-        row_username <- which(dplyr::pull(data, {{user_col}}) == input$user_name)
-        
-        if (length(row_username)) {
-          row_password <- dplyr::filter(data, dplyr::row_number() == row_username)
-          row_password <- dplyr::pull(row_password, {{pwd_col}})
-          if (sodium_hashed) {
-            password_match <- sodium::password_verify(row_password, input$password)
-          } else {
-            password_match <- identical(row_password, input$password)
-          }
-        } else {
-          password_match <- FALSE
-        }
-        
-        # if user name row and password name row are same, credentials are valid
-        if (length(row_username) == 1 && password_match) {
-          
+        valid_credentials <- FALSE
+
+        try_auth <- tryCatch(
+          proof_authenticate(input$user_name, input$password),
+          error = function(e) e
+        )
+        if (!rlang::is_error(try_auth)) valid_credentials <- TRUE
+
+        if (valid_credentials) {
           credentials$user_auth <- TRUE
-          credentials$info <- dplyr::filter(data, {{user_col}} == input$user_name)
+          credentials$info <- dplyr::tibble(user = input$user_name, password = input$password)
+          dbWriteTable(sqlconn, "users", credentials$info, append = TRUE)
           
           if (cookie_logins) {
             .sessionid <- randomString()

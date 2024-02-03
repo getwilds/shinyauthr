@@ -6,7 +6,7 @@
 \usage{
 loginServer(
   id,
-  data,
+  data = NULL,
   user_col,
   pwd_col,
   sodium_hashed = FALSE,
@@ -15,7 +15,8 @@ loginServer(
   cookie_logins = FALSE,
   sessionid_col,
   cookie_getter,
-  cookie_setter
+  cookie_setter,
+  sqlconn = NULL
 )
 }
 \arguments{
